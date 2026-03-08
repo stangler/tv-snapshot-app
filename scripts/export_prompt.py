@@ -74,9 +74,9 @@ def build_trade_table(trades: pd.DataFrame) -> str:
     lines = [f"{'No':>3}  {'取引':12}  {'売買':6}  {'約定単価':>12}  {'数量':>6}"]
     lines.append("-" * 52)
     for i, row in trades.iterrows():
-        side  = str(row.get("side",  "-"))
-        price = row.get("price", 0)
-        qty   = str(row.get("qty",  "-"))
+        side    = str(row.get("side",    "-"))
+        price   = row.get("price", 0)
+        qty     = str(row.get("qty",     "-"))
         buysell = str(row.get("buysell", "-")) if "buysell" in row.index else ""
         display_side = f"{side} {buysell}".strip()
         lines.append(f"{i+1:>3}  {display_side:12}  {qty:>6}株  ¥{float(price):>12,.1f}")
@@ -87,24 +87,33 @@ def estimate_pnl(trades: pd.DataFrame) -> str:
     """
     ロング（買建→売埋）とショート（売建→買埋）を別スタックで管理し、
     FIFO で概算実現損益を計算する。
+
+    ※ CSVの「取引」カラム（side）には "信用新規"/"信用返済" が入り、
+       「売買」カラム（buysell）には "買建"/"売埋"/"売建"/"買埋" が入るため、
+       両カラムを結合して判定する。
     """
     long_stack  = []  # (price, qty) 買建の未決済分
     short_stack = []  # (price, qty) 売建の未決済分
     realized = 0.0
 
     for _, row in trades.iterrows():
-        side  = str(row.get("side", ""))
-        price = float(row.get("price", 0))
+        # ── 修正箇所: side と buysell を結合して判定 ──
+        side = (
+            str(row.get("side",    "")) + " " +
+            str(row.get("buysell", ""))
+        ).strip()
+
+        price   = float(row.get("price", 0))
         qty_raw = row.get("qty", 0)
         try:
             qty = int(float(str(qty_raw).replace(",", "")))
         except Exception:
             qty = 0
 
-        is_long_entry  = any(k in side for k in ["買建"])
-        is_long_exit   = any(k in side for k in ["売埋"])
-        is_short_entry = any(k in side for k in ["売建"])
-        is_short_exit  = any(k in side for k in ["買埋"])
+        is_long_entry  = "買建" in side
+        is_long_exit   = "売埋" in side
+        is_short_entry = "売建" in side
+        is_short_exit  = "買埋" in side
 
         if is_long_entry:
             long_stack.append((price, qty))
@@ -132,20 +141,18 @@ def estimate_pnl(trades: pd.DataFrame) -> str:
                 if sq > matched:
                     short_stack.insert(0, (sp, sq - matched))
 
-    sign = "+" if realized >= 0 else ""
+    sign   = "+" if realized >= 0 else ""
     result = f"【概算実現損益】 {sign}{realized:,.0f}円"
 
     if long_stack:
         lq = sum(q for _, q in long_stack)
         lp = sum(p * q for p, q in long_stack) / lq
-        result += f"
-【未決済ロング建玉】 {lq}株（建値平均 ¥{lp:,.1f}）"
+        result += f"\n【未決済ロング建玉】 {lq}株（建値平均 ¥{lp:,.1f}）"
 
     if short_stack:
         sq2 = sum(q for _, q in short_stack)
         sp2 = sum(p * q for p, q in short_stack) / sq2
-        result += f"
-【未決済ショート建玉】 {sq2}株（建値平均 ¥{sp2:,.1f}）"
+        result += f"\n【未決済ショート建玉】 {sq2}株（建値平均 ¥{sp2:,.1f}）"
 
     return result
 
@@ -155,7 +162,11 @@ def load_trades(csv_path: str) -> pd.DataFrame:
     df.columns = df.columns.str.strip()
 
     rename_map = {}
-    col_lower = {c.lower(): c for c in df.columns}
+    col_lower  = {c.lower(): c for c in df.columns}
+
+    # ── カラムマッピング ──
+    # side    → 「取引」カラム: "信用新規" / "信用返済"
+    # buysell → 「売買」カラム: "買建" / "売埋" / "売建" / "買埋"
     candidates = {
         "symbol":      ["銘柄コード", "コード", "symbol", "code"],
         "symbol_name": ["銘柄名", "name"],
@@ -163,8 +174,8 @@ def load_trades(csv_path: str) -> pd.DataFrame:
         "time":        ["約定時刻", "約定時間", "time", "時刻"],
         "price":       ["約定単価(円)", "約定単価", "価格", "price", "単価"],
         "qty":         ["約定数量(株/口)", "約定数量", "数量", "qty", "quantity"],
-        "side":        ["取引", "売買区分", "売買", "side"],
-        "buysell":     ["売買", "buysell"],
+        "side":        ["取引", "side"],          # "信用新規"/"信用返済"
+        "buysell":     ["売買", "buysell"],        # "買建"/"売埋"/"売建"/"買埋"
     }
     for target, keys in candidates.items():
         for k in keys:
@@ -178,7 +189,7 @@ def load_trades(csv_path: str) -> pd.DataFrame:
     )
     df = df.dropna(subset=["price"])
     df["symbol"] = df["symbol"].astype(str).str.strip()
-    df["date"] = df["date"].astype(str).str.extract(r"(\d{4}[/\-]\d{2}[/\-]\d{2})")[0]
+    df["date"]   = df["date"].astype(str).str.extract(r"(\d{4}[/\-]\d{2}[/\-]\d{2})")[0]
     return df
 
 
@@ -190,12 +201,12 @@ def main():
     parser.add_argument("--csv", required=True, help="約定照会CSVのパス")
     args = parser.parse_args()
 
-    df = load_trades(args.csv)
+    df     = load_trades(args.csv)
     groups = list(df.groupby(["symbol", "date"]))
     print(f"✅ {len(groups)} 銘柄×日付 を処理します\n")
 
     for (symbol, date_str), trades in groups:
-        trades = trades.reset_index(drop=True)
+        trades      = trades.reset_index(drop=True)
         symbol_name = str(trades["symbol_name"].iloc[0]) \
             if "symbol_name" in trades.columns else symbol
 
@@ -242,11 +253,12 @@ def main():
             "user_prompt":   user_prompt,
             "trades": [
                 {
-                    "no":    int(i) + 1,
-                    "side":  str(row.get("side",  "")),
-                    "price": float(row.get("price", 0)),
-                    "qty":   str(row.get("qty",   "")),
-                    "time":  str(row.get("time",  "")),
+                    "no":      int(i) + 1,
+                    "side":    str(row.get("side",    "")),
+                    "buysell": str(row.get("buysell", "")),
+                    "price":   float(row.get("price", 0)),
+                    "qty":     str(row.get("qty",     "")),
+                    "time":    str(row.get("time",    "")),
                 }
                 for i, row in trades.iterrows()
             ],
