@@ -56,8 +56,8 @@ MARKER_COLOR_NAN  = (180, 180, 30)  # ナンピン括弧色
 
 # Ollamaデフォルト設定
 DEFAULT_OLLAMA_HOST    = "http://ollama:11434"
-DEFAULT_ANALYSIS_MODEL = "llava:7b-v1.6"          # ← minicpm-v から変更
-DEFAULT_ANALYSIS_TIMEOUT = 120
+DEFAULT_ANALYSIS_MODEL = "qwen3.5:4b"              # ← llava:7b-v1.6 から変更
+DEFAULT_ANALYSIS_TIMEOUT = 300                     # ← 120 から 300 に変更
 
 ANALYSIS_PROMPT_TEMPLATE = """\
 STRICT RULE: You MUST respond in Japanese ONLY.
@@ -221,13 +221,14 @@ def estimate_pnl(trades: pd.DataFrame) -> str:
 
 def build_prompt(trades: pd.DataFrame, symbol: str, date_str: str) -> str:
     """約定データを埋め込んだ動的プロンプトを生成する"""
-    return ANALYSIS_PROMPT_TEMPLATE.format(
+    prompt = ANALYSIS_PROMPT_TEMPLATE.format(
         symbol      = symbol,
         date        = date_str,
         trade_count = len(trades),
         trade_table = build_trade_table(trades),
         pnl_text    = estimate_pnl(trades),
     )
+    return prompt + "\n/no_think"  # ← qwen3.5のthinkingブロックを抑制
 
 
 # ──────────────────────────────────────────────
@@ -451,6 +452,24 @@ def save_analysis(analysis_text: str, image_path: Path, trades: pd.DataFrame):
 # ──────────────────────────────────────────────
 # メイン処理
 # ──────────────────────────────────────────────
+def analysis_is_empty(analysis_path: Path) -> bool:
+    """
+    _analysis.txt の【AI分析】セクションが空・未生成・エラーかどうかを判定する。
+    --retry-empty で再分析が必要かどうかの判断に使う。
+    """
+    if not analysis_path.exists():
+        return True
+    text = analysis_path.read_text(encoding="utf-8")
+    # 【AI分析】の後を取り出す
+    marker = "【AI分析】"
+    idx = text.find(marker)
+    if idx == -1:
+        return True
+    after = text[idx + len(marker):].strip()
+    # 空 or [ERROR] で始まる場合は再実行対象
+    return after == "" or after.startswith("[ERROR]")
+
+
 def process_group(symbol: str, date_str: str, trades: pd.DataFrame, args):
     """1銘柄×1日の処理"""
     safe_date = date_str.replace("/", "").replace("-", "")
@@ -460,12 +479,19 @@ def process_group(symbol: str, date_str: str, trades: pd.DataFrame, args):
     base_name    = f"TSE_{symbol}_1m_{safe_date}"
     raw_path     = out_dir / f"{base_name}_raw.png"
     marked_path  = out_dir / f"{base_name}.png"
+    analysis_path = out_dir / f"{base_name}_analysis.txt"
 
     print(f"\n{'='*50}")
     print(f"🏷  銘柄: {symbol}  日付: {date_str}  約定数: {len(trades)}")
 
+    # ── --retry-empty: 分析が正常に存在する銘柄はスキップ ──
+    if getattr(args, "retry_empty", False):
+        if not analysis_is_empty(analysis_path):
+            print("  ✅ 分析済みのためスキップ")
+            return
+
     # ── 撮影フェーズ ──
-    if not args.analysis_only:
+    if not args.analysis_only and not getattr(args, "retry_empty", False):
         if not take_snapshot(symbol, date_str, raw_path):
             print("  ⚠️  撮影失敗。スキップします。")
             return
@@ -500,6 +526,7 @@ def main():
     parser.add_argument("--csv", required=True, help="約定照会CSVのパス")
     parser.add_argument("--no-analysis",      action="store_true", help="分析をスキップ（撮影のみ）")
     parser.add_argument("--analysis-only",    action="store_true", help="撮影をスキップ（分析のみ）")
+    parser.add_argument("--retry-empty",      action="store_true", help="空・エラーの分析ファイルのみ再分析")
     parser.add_argument("--ollama-host",       default=os.environ.get("OLLAMA_HOST", DEFAULT_OLLAMA_HOST))
     parser.add_argument("--analysis-model",    default=DEFAULT_ANALYSIS_MODEL)
     parser.add_argument("--analysis-timeout",  type=int, default=DEFAULT_ANALYSIS_TIMEOUT)
@@ -509,10 +536,28 @@ def main():
         print("❌ --no-analysis と --analysis-only は同時に指定できません")
         sys.exit(1)
 
+    if args.retry_empty and args.no_analysis:
+        print("❌ --retry-empty と --no-analysis は同時に指定できません")
+        sys.exit(1)
+
     print(f"📂 CSV読み込み: {args.csv}")
     df = load_trades_from_csv(args.csv)
     groups = group_by_symbol_date(df)
     print(f"✅ {len(groups)} 銘柄×日付 を処理します\n")
+
+    # ── モデルのウォームアップ（初回ロード待ち） ──
+    if not args.no_analysis:
+        print(f"⏳ モデルをウォームアップ中 ({args.analysis_model})...")
+        warmup_url = f"{args.ollama_host.rstrip('/')}/api/generate"
+        try:
+            requests.post(warmup_url, json={
+                "model": args.analysis_model,
+                "prompt": "hi",
+                "stream": False,
+            }, timeout=120)
+            print("✅ ウォームアップ完了\n")
+        except Exception:
+            print("⚠️  ウォームアップ失敗（そのまま続行）\n")
 
     for symbol, date_str, trades in groups:
         process_group(symbol, date_str, trades, args)
