@@ -12,8 +12,8 @@ tv-snapshot-app/
 ├── .devcontainer/
 │   ├── devcontainer.json      # VS Code DevContainer設定
 │   ├── docker-compose.yml     # ollama + devcontainer（GPU統合・1ファイルに統合済み）
-│   ├── Dockerfile             # Python 3.11-slim-bookworm + Playwright環境
-│   └── pyproject.toml         # Pythonパッケージ（uv管理）
+│   └── Dockerfile             # Python 3.11-slim-bookworm + Playwright環境
+├── pyproject.toml             # Pythonパッケージ（uv管理）
 ├── csv/                       # 約定照会CSVの置き場
 ├── scripts/
 │   ├── batch_snapshot.py      # メイン: 撮影→マーカー合成→Ollama分析
