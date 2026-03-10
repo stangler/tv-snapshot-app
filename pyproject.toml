@@ -1,0 +1,16 @@
+[project]
+name = "tv-snapshot-app"
+version = "0.1.0"
+requires-python = "==3.11.*"
+dependencies = [
+    "playwright==1.44.0",
+    "pandas==2.2.2",
+    "Pillow==10.3.0",
+    "requests==2.32.3",
+    "numpy==1.26.4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
