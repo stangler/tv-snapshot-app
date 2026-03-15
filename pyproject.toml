@@ -14,3 +14,12 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
 ]
+
+[project.scripts]
+snap = "scripts.batch_snapshot:main"
+
+[tool.uv]
+package = true
+
+[tool.setuptools.packages.find]
+include = ["scripts*"]
