@@ -44,6 +44,9 @@ TV_URL_TEMPLATE = (
     "&theme=dark"
 )
 
+# ① 日経平均チャートURL
+NI225_TV_URL = "https://www.tradingview.com/chart/?symbol=TVC:NI225&interval=1&theme=dark"
+
 CHART_LEFT_PX   = 60
 CHART_RIGHT_PX  = 1860
 CHART_TOP_PX    = 60
@@ -59,6 +62,7 @@ DEFAULT_OLLAMA_HOST      = "http://ollama:11434"
 DEFAULT_ANALYSIS_MODEL   = "qwen3.5:4b"
 DEFAULT_ANALYSIS_TIMEOUT = 300
 
+# ② Ollama分析プロンプト（Obsidian対応3セクション構造）
 ANALYSIS_PROMPT_TEMPLATE = """\
 STRICT RULE: You MUST respond in Japanese ONLY.
 FORBIDDEN: Chinese characters that are not also Japanese kanji (e.g. 趋势, 买, 下行, 显示 are FORBIDDEN).
@@ -76,37 +80,49 @@ This chart shows a Japanese stock ({symbol}) 1-minute candlestick chart on {date
 
 {pnl_text}
 
-以下の4項目を【必ず自然な日本語のみ】で回答してください。中国語・英語は一切使わないこと。
-約定一覧のデータとチャート画像を照合しながら分析してください。
+以下の3セクションを【必ず自然な日本語のみ】でObsidian用Markdownとして回答してください。
+中国語・英語は一切使わないこと。コードブロックは使わないこと。
+見出し・箇条書き・表のみ使用すること。
 
-1. チャートの全体的なトレンド（上昇・下降・横ばい）
-2. 約定タイミングの評価（各約定について良かった点・改善点）
-3. チャートパターンの有無（例：ダブルトップ、フラッグ、レンジブレイク等）
-4. 次回トレードへのアドバイス
+## 日経平均との連動
+- 日経平均の動きとこの銘柄の連動・乖離を述べてください
+
+## チャートパターンと約定タイミング評価
+- チャートに見られるテクニカルパターン（例：ダブルトップ、フラッグ、レンジブレイク等）
+- 各約定について良かった点・改善点を具体的に述べてください
+
+## 損益と次回アドバイス
+- 概算損益の評価
+- このトレードの反省点と次回戦略
 """
 
+# ② エクスポート用システムプロンプト（4セクション構造）
 EXPORT_SYSTEM_PROMPT = """\
 あなたは日本株のデイトレード専門のアナリストです。
 提供されるチャート画像と約定データをもとに、トレードの評価と改善提案を行います。
 
-出力は必ず以下の構造で、日本語で答えてください：
+出力は必ず以下の4セクション構造で、日本語のみで答えてください。
+コードブロックは使わないこと。見出し・箇条書き・表のみ使用すること。
 
-## 1. チャート概況
-- トレンド方向（上昇 / 下降 / 横ばい）
-- 値幅・ボラティリティの特徴
+## 1. 日経平均 分析・解説
+- 寄付きから大引けまでの全体的な値動きの流れ
+- 主な転換点・ボラティリティの特徴
 
-## 2. 約定タイミング評価
-各約定について「良かった点」または「改善点」を具体的に述べてください。
+## 2. 銘柄別トレード分析
+- 日経平均との連動・乖離
+- チャートパターン（あれば）
+- 各約定タイミングの評価（良かった点・改善点）
+- 損益評価
 
-## 3. パターン分析
-チャートに見られるテクニカルパターン（あれば）を挙げてください。
-例: ダブルトップ、フラッグ、V字回復、レンジブレイク等
+## 3. その日のトレード総合評価
+- 損益合計
+- 良かった点と反省点
+- 翌日の戦略提案
 
-## 4. 損益評価
-約定データから概算損益を計算し、評価してください。
-
-## 5. 次回へのアドバイス
-このトレードの反省点と、同じ銘柄・相場環境での次回戦略を提案してください。
+## 4. Obsidian用トレード日誌（Markdownそのまま貼り付け可）
+- 見出し・箇条書き・表のみ使用
+- コードブロック不使用
+- # {date} トレード日誌 の形式で開始すること
 """
 
 EXPORT_USER_PROMPT_TEMPLATE = """\
@@ -120,9 +136,54 @@ EXPORT_USER_PROMPT_TEMPLATE = """\
 【補足】
 - マーカー凡例: ▲ = 買建/買埋（緑）、▽ = 売埋/売建（赤）
 - 三角形の先端が約定価格の位置を示しています
-- 添付画像: {image_path}
+- 銘柄チャート画像: {image_path}
+- 日経平均チャート画像: {nikkei_image_path}
 
 上記チャート画像を分析し、指定のフォーマットで評価してください。
+"""
+
+# ② まとめプロンプト用システムプロンプト
+SUMMARY_SYSTEM_PROMPT = """\
+あなたは日本株のデイトレード専門のアナリストです。
+その日の全銘柄の約定データとチャート画像をもとに、1日のトレードを総合評価します。
+
+出力は必ず以下の構造で、日本語のみで答えてください。
+コードブロックは使わないこと。見出し・箇条書き・表のみ使用すること。
+
+# {date} トレード日誌
+
+## 日経平均の動き
+- 寄付きから大引けの流れ・転換点・ボラティリティ
+
+## 銘柄別サマリー
+各銘柄について以下をまとめること：
+- 日経との連動
+- チャートパターン
+- 約定タイミング評価
+- 損益（概算）
+
+## 本日の総合評価
+- 全銘柄合算の損益合計
+- 良かった点
+- 反省点
+- 翌日戦略
+
+（このMarkdownはObsidianにそのままコピペできる形式で出力してください）
+"""
+
+# ② まとめプロンプト用ユーザープロンプトテンプレート
+SUMMARY_USER_PROMPT_TEMPLATE = """\
+以下は {date} の全銘柄トレードデータです。
+
+【日経平均チャート画像】
+{nikkei_image_path}
+
+【銘柄一覧】
+{symbol_count}銘柄
+
+{all_symbols_data}
+
+上記すべてのデータとチャート画像を総合的に分析し、指定のフォーマットで1日のトレード日誌を作成してください。
 """
 
 
@@ -249,7 +310,8 @@ def estimate_pnl(trades: pd.DataFrame) -> str:
     return result
 
 
-def build_prompt(trades: pd.DataFrame, symbol: str, date_str: str) -> str:
+def build_prompt(trades: pd.DataFrame, symbol: str, date_str: str,
+                 nikkei_image_path: Path | None = None) -> str:
     prompt = ANALYSIS_PROMPT_TEMPLATE.format(
         symbol      = symbol,
         date        = date_str,
@@ -270,6 +332,7 @@ def export_prompt_and_payload(
     image_path: Path,
     out_dir: Path,
     safe_date: str,
+    nikkei_image_path: Path | None = None,
 ):
     """プロンプトテキストとJSONペイロードをファイルに書き出す"""
     symbol_name = str(trades["symbol_name"].iloc[0]) \
@@ -278,16 +341,20 @@ def export_prompt_and_payload(
     image_note = str(image_path) if image_path.exists() \
         else "※ 画像未生成。撮影後に再実行してください。"
 
+    nikkei_note = str(nikkei_image_path) if (nikkei_image_path and nikkei_image_path.exists()) \
+        else "※ 日経平均画像未取得"
+
     trade_table = build_trade_table(trades)
     pnl_text    = estimate_pnl(trades)
 
     user_prompt = EXPORT_USER_PROMPT_TEMPLATE.format(
-        date        = date_str,
-        symbol      = symbol,
-        symbol_name = symbol_name,
-        trade_table = trade_table,
-        pnl_text    = pnl_text,
-        image_path  = image_note,
+        date             = date_str,
+        symbol           = symbol,
+        symbol_name      = symbol_name,
+        trade_table      = trade_table,
+        pnl_text         = pnl_text,
+        image_path       = image_note,
+        nikkei_image_path = nikkei_note,
     )
 
     # プロンプトテキスト出力
@@ -301,13 +368,14 @@ def export_prompt_and_payload(
 
     # JSONペイロード出力
     payload = {
-        "generated_at":  datetime.now().isoformat(),
-        "symbol":        symbol,
-        "symbol_name":   symbol_name,
-        "date":          date_str,
-        "image_path":    str(image_path),
-        "system_prompt": EXPORT_SYSTEM_PROMPT,
-        "user_prompt":   user_prompt,
+        "generated_at":       datetime.now().isoformat(),
+        "symbol":             symbol,
+        "symbol_name":        symbol_name,
+        "date":               date_str,
+        "image_path":         str(image_path),
+        "nikkei_image_path":  nikkei_note,
+        "system_prompt":      EXPORT_SYSTEM_PROMPT,
+        "user_prompt":        user_prompt,
         "trades": [
             {
                 "no":      int(i) + 1,
@@ -326,21 +394,54 @@ def export_prompt_and_payload(
         json.dump(payload, f, ensure_ascii=False, indent=2)
     print(f"  📦 JSONペイロード出力 → {json_path.name}")
 
+    return prompt_path
 
-def export_summary_prompt(groups_data: list, safe_date: str, out_dir: Path):
-    """全銘柄分のプロンプトを1ファイルにまとめて出力する"""
+
+def export_summary_prompt(
+    groups_data: list,
+    safe_date: str,
+    out_dir: Path,
+    nikkei_image_path: Path | None = None,
+):
+    """全銘柄分のまとめプロンプトを1ファイルに出力する"""
+    # groups_data の要素: (symbol, prompt_path, image_path, trades)
+    date_str = f"{safe_date[:4]}/{safe_date[4:6]}/{safe_date[6:]}" if len(safe_date) == 8 else safe_date
+
+    nikkei_note = str(nikkei_image_path) if (nikkei_image_path and nikkei_image_path.exists()) \
+        else "※ 日経平均画像未取得"
+
+    # 各銘柄データブロックを組み立て
+    all_symbols_blocks = []
+    for symbol, prompt_path, image_path, trades in groups_data:
+        symbol_name = str(trades["symbol_name"].iloc[0]) \
+            if "symbol_name" in trades.columns else symbol
+        trade_table = build_trade_table(trades)
+        pnl_text    = estimate_pnl(trades)
+        image_note  = str(image_path) if image_path.exists() else "※ 画像未生成"
+
+        block = (
+            f"### {symbol}（{symbol_name}）\n"
+            f"チャート画像: {image_note}\n\n"
+            f"【約定一覧】\n{trade_table}\n\n"
+            f"{pnl_text}\n"
+        )
+        all_symbols_blocks.append(block)
+
+    all_symbols_data = "\n" + ("─" * 60 + "\n").join(all_symbols_blocks)
+
+    user_prompt = SUMMARY_USER_PROMPT_TEMPLATE.format(
+        date              = date_str,
+        nikkei_image_path = nikkei_note,
+        symbol_count      = len(groups_data),
+        all_symbols_data  = all_symbols_data,
+    )
+
     summary_path = out_dir / f"{safe_date}_まとめ_prompt.txt"
     with open(summary_path, "w", encoding="utf-8") as f:
-        f.write(f"=== {safe_date} 全銘柄まとめ分析依頼 ===\n")
-        f.write(f"銘柄数: {len(groups_data)}\n\n")
-        for symbol, prompt_path, image_path in groups_data:
-            f.write(f"{'='*60}\n")
-            f.write(f"【{symbol}】\n")
-            f.write(f"画像: {image_path}\n")
-            f.write(f"{'='*60}\n")
-            if prompt_path.exists():
-                f.write(prompt_path.read_text(encoding="utf-8"))
-            f.write("\n\n")
+        f.write("=== SYSTEM PROMPT ===\n")
+        f.write(SUMMARY_SYSTEM_PROMPT.replace("{date}", date_str))
+        f.write("\n\n=== USER PROMPT ===\n")
+        f.write(user_prompt)
     print(f"\n📋 まとめプロンプト出力 → {summary_path.name}")
 
 
@@ -421,6 +522,33 @@ def take_snapshot(symbol: str, date_str: str, out_path: Path,
         return False
 
 
+# ① 日経平均スクリーンショット
+def take_nikkei_snapshot(out_dir: Path, safe_date: str,
+                         width: int = 1920, height: int = 1080,
+                         wait_sec: int = 8) -> Path | None:
+    """日経平均（TVC:NI225）の1分足チャートを撮影する。既存ファイルがあれば再利用。"""
+    out_path = out_dir / f"NI225_1m_{safe_date}.png"
+
+    if out_path.exists():
+        print(f"  ♻️  日経平均画像を再利用: {out_path.name}")
+        return out_path
+
+    print(f"  📷 日経平均（TVC:NI225）→ {NI225_TV_URL}")
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": width, "height": height})
+            page.goto(NI225_TV_URL, wait_until="networkidle", timeout=30000)
+            time.sleep(wait_sec)
+            page.screenshot(path=str(out_path))
+            browser.close()
+        print(f"  ✅ 日経平均チャート保存 → {out_path.name}")
+        return out_path
+    except Exception as e:
+        print(f"  ❌ 日経平均スクリーンショット失敗: {e}")
+        return None
+
+
 # ──────────────────────────────────────────────
 # マーカー描画
 # ──────────────────────────────────────────────
@@ -496,14 +624,24 @@ def analyze_image_with_ollama(image_path: Path,
                                ollama_host: str = DEFAULT_OLLAMA_HOST,
                                model: str = DEFAULT_ANALYSIS_MODEL,
                                prompt: str = "",
-                               timeout: int = DEFAULT_ANALYSIS_TIMEOUT) -> str:
+                               timeout: int = DEFAULT_ANALYSIS_TIMEOUT,
+                               nikkei_image_path: Path | None = None) -> str:
+    """① マルチ画像対応: 日経平均画像も images リストに追加"""
+    images = []
+
+    # 日経平均画像（先に渡す）
+    if nikkei_image_path and nikkei_image_path.exists():
+        with open(nikkei_image_path, "rb") as f:
+            images.append(base64.b64encode(f.read()).decode("utf-8"))
+
+    # 銘柄チャート画像
     with open(image_path, "rb") as f:
-        img_b64 = base64.b64encode(f.read()).decode("utf-8")
+        images.append(base64.b64encode(f.read()).decode("utf-8"))
 
     payload = {
         "model":  model,
         "prompt": prompt,
-        "images": [img_b64],
+        "images": images,
         "stream": False,
     }
 
@@ -558,7 +696,8 @@ def analysis_is_empty(analysis_path: Path) -> bool:
     return after == "" or after.startswith("[ERROR]")
 
 
-def process_group(symbol: str, date_str: str, trades: pd.DataFrame, args):
+def process_group(symbol: str, date_str: str, trades: pd.DataFrame, args,
+                  nikkei_image_path: Path | None = None):
     """1銘柄×1日の処理"""
     safe_date     = date_str.replace("/", "").replace("-", "")
     out_dir       = SNAPSHOT_DIR / safe_date
@@ -593,23 +732,28 @@ def process_group(symbol: str, date_str: str, trades: pd.DataFrame, args):
                 return
 
     # ── プロンプト・JSONエクスポート（常に実行） ──
-    export_prompt_and_payload(symbol, date_str, trades, marked_path, out_dir, safe_date)
+    prompt_path = export_prompt_and_payload(
+        symbol, date_str, trades, marked_path, out_dir, safe_date,
+        nikkei_image_path=nikkei_image_path,
+    )
 
     # ── 分析フェーズ ──
     if args.no_analysis:
         print("  ℹ️  分析スキップ（--with-analysis を付けると分析します）")
-        return
+        return prompt_path
 
     print(f"  🤖 Ollamaで分析中 ({args.analysis_model})...")
-    prompt = build_prompt(trades, symbol, date_str)
+    prompt = build_prompt(trades, symbol, date_str, nikkei_image_path=nikkei_image_path)
     analysis = analyze_image_with_ollama(
-        image_path  = marked_path,
-        ollama_host = args.ollama_host,
-        model       = args.analysis_model,
-        prompt      = prompt,
-        timeout     = args.analysis_timeout,
+        image_path        = marked_path,
+        ollama_host       = args.ollama_host,
+        model             = args.analysis_model,
+        prompt            = prompt,
+        timeout           = args.analysis_timeout,
+        nikkei_image_path = nikkei_image_path,
     )
     save_analysis(analysis, marked_path, trades)
+    return prompt_path
 
 
 def main():
@@ -662,22 +806,46 @@ def main():
             print("⚠️  ウォームアップ失敗（そのまま続行）\n")
 
     # 日付ごとにまとめプロンプト用データを収集
+    # 要素: (symbol, prompt_path, image_path, trades)
     date_groups: dict = defaultdict(list)
 
+    # ① 日付ごとに日経平均を1回だけ撮影するキャッシュ
+    nikkei_cache: dict[str, Path | None] = {}
+
     for symbol, date_str, trades in groups:
-        process_group(symbol, date_str, trades, args)
+        safe_date = date_str.replace("/", "").replace("-", "")
+        out_dir   = SNAPSHOT_DIR / safe_date
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        # ① 日経平均: 日付ごとに1回だけ撮影
+        if safe_date not in nikkei_cache:
+            if args.analysis_only or getattr(args, "retry_empty", False):
+                # 撮影スキップ: 既存ファイルがあれば使う
+                candidate = out_dir / f"NI225_1m_{safe_date}.png"
+                nikkei_cache[safe_date] = candidate if candidate.exists() else None
+            else:
+                nikkei_cache[safe_date] = take_nikkei_snapshot(out_dir, safe_date)
+
+        nikkei_image_path = nikkei_cache[safe_date]
+
+        prompt_path = process_group(symbol, date_str, trades, args,
+                                    nikkei_image_path=nikkei_image_path)
 
         # まとめプロンプト用にパスを記録
-        safe_date   = date_str.replace("/", "").replace("-", "")
-        out_dir     = SNAPSHOT_DIR / safe_date
-        prompt_path = out_dir / f"TSE_{symbol}_1m_{safe_date}_prompt.txt"
-        image_path  = out_dir / f"TSE_{symbol}_1m_{safe_date}.png"
-        date_groups[safe_date].append((symbol, prompt_path, image_path))
+        image_path = out_dir / f"TSE_{symbol}_1m_{safe_date}.png"
+        if prompt_path is None:
+            prompt_path = out_dir / f"TSE_{symbol}_1m_{safe_date}_prompt.txt"
+        date_groups[safe_date].append((symbol, prompt_path, image_path, trades))
 
     # 日付ごとにまとめプロンプトを生成
     for safe_date, group_data in date_groups.items():
         out_dir = SNAPSHOT_DIR / safe_date
-        export_summary_prompt(group_data, safe_date, out_dir)
+        export_summary_prompt(
+            group_data,
+            safe_date,
+            out_dir,
+            nikkei_image_path=nikkei_cache.get(safe_date),
+        )
 
     print(f"\n🎉 完了！保存先: {SNAPSHOT_DIR}")
 
