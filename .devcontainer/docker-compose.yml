@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  # ─────────────────────────────────────────────
+  # 開発コンテナ（VS Code DevContainer）
+  # ─────────────────────────────────────────────
+  devcontainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tv-snapshot-dev
+    command: sleep infinity
+    volumes:
+      - ../:/workspace:cached
+    working_dir: /workspace
