@@ -1,13 +1,10 @@
 version: "3.8"
 
 services:
-  # ─────────────────────────────────────────────
-  # 開発コンテナ（VS Code DevContainer）
-  # ─────────────────────────────────────────────
   devcontainer:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..        # ← . から .. に変更
+      dockerfile: .devcontainer/Dockerfile   # ← パスも合わせて修正
     container_name: tv-snapshot-dev
     command: sleep infinity
     volumes:
