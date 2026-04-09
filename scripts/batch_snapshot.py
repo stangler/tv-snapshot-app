@@ -128,6 +128,37 @@ EXPORT_USER_PROMPT_TEMPLATE = """\
 上記チャート画像を分析し、指定のフォーマットで評価してください。
 """
 
+SUMMARY_SYSTEM_PROMPT = """\
+あなたは日本株のデイトレード専門のアナリストです。
+その日の全銘柄の約定データとチャート画像をもとに、1日のトレードを総合評価します。
+
+出力は必ず以下の構造で、日本語のみで答えてください。
+コードブロックは使わないこと。見出し・箇条書き・表のみ使用すること。
+
+# {date} トレード日誌
+
+## メモ
+（ここに気づきや反省を記入）
+
+## 日経平均の動き
+- 寄付きから大引けの流れ・転換点・ボラティリティ
+
+## 銘柄別サマリー
+各銘柄について以下をまとめること：
+- 日経との連動
+- チャートパターン
+- 約定タイミング評価
+- 損益（概算）
+
+## 本日の総合評価
+- 全銘柄合算の損益合計
+- 良かった点
+- 反省点
+- 翌日戦略
+
+（このMarkdownはObsidianにそのままコピペできる形式で出力してください）
+"""
+
 
 # ──────────────────────────────────────────────
 # 約定データ整形・損益計算
@@ -328,18 +359,50 @@ def export_prompt_and_payload(
 
 
 def export_summary_prompt(groups_data: list, safe_date: str, out_dir: Path):
+    """日誌フォーマットのまとめプロンプトを生成（Obsidian向け）"""
+    date_str    = f"{safe_date[:4]}/{safe_date[4:6]}/{safe_date[6:]}"
+    nikkei_path = out_dir / f"NI225_1m_{safe_date}.png"
+
+    user_lines = [
+        f"以下は {date_str} の全銘柄トレードデータです。",
+        "",
+        "【日経平均チャート画像】",
+        str(nikkei_path),
+        "",
+        "【銘柄一覧】",
+        f"{len(groups_data)}銘柄",
+    ]
+
+    for symbol, prompt_path, image_path, trades in groups_data:
+        symbol_name = str(trades["symbol_name"].iloc[0]) \
+            if "symbol_name" in trades.columns else symbol
+        trade_table = build_trade_table(trades)
+        pnl_text    = estimate_pnl(trades)
+
+        user_lines += [
+            "",
+            "",
+            f"### {symbol}（{symbol_name}）",
+            f"チャート画像: {image_path}",
+            "",
+            "【約定一覧】",
+            trade_table,
+            "",
+            pnl_text,
+            "─" * 60,
+        ]
+
+    user_lines.append(
+        "\n上記すべてのデータとチャート画像を総合的に分析し、"
+        "指定のフォーマットで1日のトレード日誌を作成してください。"
+    )
+
     summary_path = out_dir / f"{safe_date}_まとめ_prompt.txt"
     with open(summary_path, "w", encoding="utf-8") as f:
-        f.write(f"=== {safe_date} 全銘柄まとめ分析依頼 ===\n")
-        f.write(f"銘柄数: {len(groups_data)}\n\n")
-        for symbol, prompt_path, image_path in groups_data:
-            f.write(f"{'='*60}\n")
-            f.write(f"【{symbol}】\n")
-            f.write(f"画像: {image_path}\n")
-            f.write(f"{'='*60}\n")
-            if prompt_path.exists():
-                f.write(prompt_path.read_text(encoding="utf-8"))
-            f.write("\n\n")
+        f.write("=== SYSTEM PROMPT ===\n")
+        f.write(SUMMARY_SYSTEM_PROMPT.format(date=date_str))
+        f.write("\n\n=== USER PROMPT ===\n")
+        f.write("\n".join(user_lines))
     print(f"\n📋 まとめプロンプト出力 → {summary_path.name}")
 
 
@@ -428,6 +491,7 @@ def take_snapshot(symbol: str, date_str: str, out_path: Path,
         print(f"  ❌ スクリーンショット失敗: {e}")
         return False
 
+
 def take_nikkei_snapshot(date_str: str, out_path: Path,
                          width: int = 1920, height: int = 1080,
                          wait_sec: int = 8) -> bool:
@@ -456,6 +520,7 @@ def take_nikkei_snapshot(date_str: str, out_path: Path,
     except Exception as e:
         print(f"  ❌ スクリーンショット失敗: {e}")
         return False
+
 
 # ──────────────────────────────────────────────
 # マーカー描画
@@ -702,7 +767,7 @@ def main():
         out_dir     = SNAPSHOT_DIR / safe_date
         prompt_path = out_dir / f"TSE_{symbol}_1m_{safe_date}_prompt.txt"
         image_path  = out_dir / f"TSE_{symbol}_1m_{safe_date}.png"
-        date_groups[safe_date].append((symbol, prompt_path, image_path))
+        date_groups[safe_date].append((symbol, prompt_path, image_path, trades))
 
     for safe_date, group_data in date_groups.items():
         out_dir = SNAPSHOT_DIR / safe_date
