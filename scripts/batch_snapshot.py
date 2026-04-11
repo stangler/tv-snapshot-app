@@ -33,6 +33,31 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import sync_playwright
 
+from PIL import ImageFont
+
+def _load_font_candidates(size: int, bold: bool = False):
+    """
+    Noto → DejaVu の順でフォントを試し、最初に読み込めたフォントを返す。
+    読み込めなければ ImageFont.load_default() を返す（日本語は豆腐化する可能性あり）。
+    """
+    if bold:
+        candidates = [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ]
+    else:
+        candidates = [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+    for p in candidates:
+        try:
+            return ImageFont.truetype(p, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
 # ──────────────────────────────────────────────
 # 定数
 # ──────────────────────────────────────────────
@@ -609,6 +634,182 @@ def _draw_price_label(draw, x, y, label, font, color, above: bool):
     draw.text((lx + pad, ly + pad), label, font=font, fill=color + (255,))
 
 
+def _draw_trade_table(draw, trades: pd.DataFrame, font_header, font_body,
+                      img_width: int, img_height: int):
+    """
+    トレード一覧テーブルを画像右下に描画する。
+    列: No | L/S | 売買 | 時刻 | 価格 | 損益
+    """
+    import re as _re
+
+    # ── P&L を行ごとに計算 ──
+    long_stack:  list = []
+    short_stack: list = []
+    row_pnl: dict = {}
+
+    for i, row in trades.iterrows():
+        side    = str(row.get("side",    ""))
+        buysell = str(row.get("buysell", ""))
+        combined = (side + " " + buysell).strip()
+        price = float(row.get("price", 0))
+        try:
+            qty = int(float(str(row.get("qty", 0)).replace(",", "")))
+        except Exception:
+            qty = 0
+
+        if "買建" in combined:
+            long_stack.append((price, qty))
+            row_pnl[i] = None
+        elif "売埋" in combined:
+            realized = 0.0
+            rem = qty
+            while rem > 0 and long_stack:
+                bp, bq = long_stack.pop(0)
+                m = min(rem, bq)
+                realized += (price - bp) * m
+                rem -= m
+                if bq > m:
+                    long_stack.insert(0, (bp, bq - m))
+            row_pnl[i] = realized
+        elif "売建" in combined:
+            short_stack.append((price, qty))
+            row_pnl[i] = None
+        elif "買埋" in combined:
+            realized = 0.0
+            rem = qty
+            while rem > 0 and short_stack:
+                sp, sq = short_stack.pop(0)
+                m = min(rem, sq)
+                realized += (sp - price) * m
+                rem -= m
+                if sq > m:
+                    short_stack.insert(0, (sp, sq - m))
+            row_pnl[i] = realized
+        else:
+            row_pnl[i] = None
+
+    # ── テーブル行データを構築 ──
+    COLS      = ["No", "L/S", "売買",   "時刻",  "価格",          "損益"]
+    COL_W     = [42,   52,    88,       76,      128,             155]
+    ROW_H     = 28
+    PAD_X     = 12
+    PAD_Y     = 8
+    HEADER_H  = ROW_H + 6
+
+    rows_data = []
+    for i, row in trades.iterrows():
+        side    = str(row.get("side",    "-"))
+        buysell = str(row.get("buysell", "-"))
+        combined = side + buysell
+        price   = float(row.get("price", 0))
+        time_val = str(row.get("time", "-")).strip()
+        qty_raw  = str(row.get("qty", "-"))
+
+        # L/S 判定（建玉の方向を表示：建てはその方向、埋めは元の建玉方向を表示）
+        if "買建" in combined:
+            ls_label = "L"
+        elif "売建" in combined:
+            ls_label = "S"
+        elif "買埋" in combined:
+            # 買埋 = ショートを決済（元はショート）→ 表示は S
+            ls_label = "S"
+        elif "売埋" in combined:
+            # 売埋 = ロングを決済（元はロング）→ 表示は L
+            ls_label = "L"
+        else:
+            if "買" in combined:
+                ls_label = "L"
+            elif "売" in combined:
+                ls_label = "S"
+            else:
+                ls_label = "-"
+
+        # 色割当を ls_label 基準にする
+        if ls_label == "L":
+            row_bg   = (0, 160, 70, 45)
+            txt_color = (120, 255, 140, 255)
+        elif ls_label == "S":
+            row_bg   = (200, 40, 40, 45)
+            txt_color = (255, 130, 130, 255)
+        else:
+            row_bg = (180, 180, 180, 45)
+            txt_color = (100, 100, 100, 255)
+
+        # 損益セル
+        pnl = row_pnl.get(i)
+        if pnl is None:
+            pnl_str   = "-"
+            pnl_color = (180, 180, 180, 255)
+        else:
+            sign      = "+" if pnl >= 0 else ""
+            pnl_str   = f"{sign}{pnl:,.0f}円"
+            pnl_color = (0, 140, 60, 255) if pnl > 0 else (200, 30, 30, 255) if pnl < 0 else (100, 100, 100, 255)
+
+        rows_data.append({
+            "cells":     [str(i + 1), ls_label, buysell, time_val,
+                          f"¥{price:,.0f}", pnl_str],
+            "row_bg":    row_bg,
+            "txt_color": txt_color,
+            "pnl_color": pnl_color,
+        })
+
+    # ── テーブルサイズ・配置（チャートエリア左下） ──
+    total_w = sum(COL_W) + PAD_X * 2
+    total_h = HEADER_H + len(rows_data) * ROW_H + PAD_Y * 2
+    MARGIN  = 16
+    tx = MARGIN                          # 左端
+    ty = img_height - total_h - MARGIN  # 下端
+
+    # 背景（白・不透明）
+    draw.rounded_rectangle(
+        [tx, ty, tx + total_w, ty + total_h],
+        radius=6,
+        fill=(255, 255, 255, 235),
+        outline=(180, 180, 180, 255),
+        width=1,
+    )
+
+    # ── ヘッダー行（濃いグレー背景）──
+    draw.rounded_rectangle(
+        [tx, ty, tx + total_w, ty + HEADER_H + PAD_Y],
+        radius=6,
+        fill=(55, 65, 80, 255),
+    )
+    hx = tx + PAD_X
+    hy = ty + PAD_Y
+    for col, cw in zip(COLS, COL_W):
+        draw.text((hx, hy), col, font=font_header, fill=(255, 255, 255, 255))
+        hx += cw
+
+    # ヘッダー下線
+    draw.line(
+        [(tx, ty + HEADER_H + PAD_Y),
+         (tx + total_w, ty + HEADER_H + PAD_Y)],
+        fill=(180, 180, 180, 255), width=1,
+    )
+
+    # ── データ行 ──
+    for ri, rd in enumerate(rows_data):
+        ry = ty + HEADER_H + PAD_Y + ri * ROW_H
+
+        # （交互ストライプを削除）行背景はテーブル全体の白背景を利用するため個別の塗りつぶしは行わない
+
+        # 買/売の左端アクセントライン
+        accent = (0, 160, 70, 220) if rd["row_bg"][0] == 0 else (200, 40, 40, 220)
+        draw.rectangle([tx + 1, ry, tx + 4, ry + ROW_H - 1], fill=accent)
+
+        rx = tx + PAD_X + 4  # アクセントライン分ずらす
+        for ci, (cell, cw) in enumerate(zip(rd["cells"], COL_W)):
+            if ci == 1:       # L/S 列
+                color = (0, 140, 60, 255) if rd["row_bg"][0] == 0 else (190, 30, 30, 255)
+            elif ci == 5:     # 損益列
+                color = rd["pnl_color"]
+            else:
+                color = (30, 30, 30, 255)
+            draw.text((rx, ry + 4), cell, font=font_body, fill=color)
+            rx += cw
+
+
 def draw_markers(image_path: Path, trades: pd.DataFrame, out_path: Path):
     img = Image.open(image_path).convert("RGBA")
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
@@ -619,13 +820,15 @@ def draw_markers(image_path: Path, trades: pd.DataFrame, out_path: Path):
     LABEL_SIZE  = 16   # 価格ラベルのフォントサイズ
     LINE_WIDTH  = 3    # エントリー→エグジット結線の太さ
 
-    try:
-        font_num   = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE)
-        font_label = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", LABEL_SIZE)
-    except Exception:
-        font_num = font_label = ImageFont.load_default()
+    # フォント読み込みはモジュール先頭で定義した _load_font_candidates を利用する
+    font_num   = _load_font_candidates(FONT_SIZE, bold=True)
+    font_label = _load_font_candidates(LABEL_SIZE, bold=False)
+
+    # 日本語対応フォント（テーブル描画用）
+    TABLE_HEADER_SIZE = 20
+    TABLE_BODY_SIZE   = 18
+    font_tbl_header = _load_font_candidates(TABLE_HEADER_SIZE, bold=True)
+    font_tbl_body   = _load_font_candidates(TABLE_BODY_SIZE, bold=False)
 
     prices = trades["price"].dropna().tolist()
     if not prices:
@@ -744,9 +947,17 @@ def draw_markers(image_path: Path, trades: pd.DataFrame, out_path: Path):
             above=is_buy,
         )
 
+    # ── トレードテーブルをオーバーレイに描画 ──
+    _draw_trade_table(
+        draw, trades,
+        font_tbl_header, font_tbl_body,
+        img.width, img.height,
+    )
+
     composite = Image.alpha_composite(img, overlay).convert("RGB")
     composite.save(str(out_path))
     print(f"  🖊  マーカー合成 → {out_path.name}")
+
 
 
 # ──────────────────────────────────────────────

@@ -1,3 +1,4 @@
+```markdown
 # TradingView Snapshot 分析環境
 
 **Python + Playwright** で動くシンプル構成。
@@ -25,6 +26,61 @@ tv-snapshot-app/
 │   └── test_batch_snapshot.py     # ユニットテスト
 └── snapshots/                     # 撮影画像・分析テキストの保存先
 ```
+
+---
+
+## フォントと日本語表示（追記）
+
+Pillow を使った画像描画で日本語を安定して表示するため、`batch_snapshot.py` 内で **Noto → DejaVu → デフォルト** の順にフォントを試すフォールバック処理を導入しています。コンテナ環境では Noto Sans CJK JP が優先して使われる想定です。
+
+### 変更点（実装概要）
+- `batch_snapshot.py` のインポート直後に `_load_font_candidates(size, bold=False)` 関数を追加。
+- フォント読み込み箇所（`ImageFont.truetype(...)` を直接呼んでいる箇所）を `_load_font_candidates(...)` に置換。
+- テーブル描画用やマーカー用のフォントは `_load_font_candidates` を使って取得するように変更。
+
+### 追加されたフォント候補（順序）
+- `/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc`（Regular）
+- `/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc`（Bold）
+- `/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf`（Regular, フォールバック）
+- `/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf`（Bold, フォールバック）
+- どれも読めない場合は `ImageFont.load_default()` を返します（日本語は豆腐化する可能性あり）。
+
+### 使い方と確認コマンド
+- 変更は `scripts/batch_snapshot.py` の先頭（`import` ブロック直後）に関数を追加し、既存の `ImageFont.truetype` 呼び出しを `_load_font_candidates` に置換してください。
+- コンテナ内での簡易確認:
+```bash
+# scripts ディレクトリに移動して実行
+cd /workspace/scripts
+python - <<'PY'
+from batch_snapshot import _load_font_candidates
+print("body:", _load_font_candidates(18, bold=False))
+print("bold:", _load_font_candidates(20, bold=True))
+PY
+```
+- 実際に描画して目視確認する例:
+```bash
+cd /workspace/scripts
+python - <<'PY'
+import importlib.util
+from pathlib import Path
+p = Path("batch_snapshot.py")
+spec = importlib.util.spec_from_file_location("batch_snapshot", str(p))
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+f = mod._load_font_candidates(24, bold=False)
+from PIL import Image, ImageDraw
+img = Image.new("RGB",(600,100),(255,255,255))
+d = ImageDraw.Draw(img)
+d.text((10,10),"テスト表示: 日本語 ABC 123 ▲▽", font=f, fill=(0,0,0))
+img.save("/workspace/font_test.png")
+print("saved /workspace/font_test.png")
+PY
+```
+生成された `/workspace/font_test.png` を開いて日本語が正しく表示されることを確認してください。
+
+### 注意点
+- 絵文字は別フォント（例: `NotoColorEmoji.ttf`）が必要です。絵文字表示が必要な場合は別途フォントを追加して組み合わせる実装が必要です。
+- フォントサイズやマージンによって文字がはみ出すことがあります。実際のスナップでレイアウトを確認し、必要なら `FONT_SIZE`, `LABEL_SIZE`, `CIRCLE_R`, `PRICE_PADDING_RATIO` 等を調整してください。
 
 ---
 
@@ -347,3 +403,4 @@ snap --date 0315 --with-analysis --ollama-host http://localhost:11434 --analysis
 **損益が0円と表示される**
 `side`（取引）カラムと `buysell`（売買）カラムの両方が正しく読み込まれているか確認してください。
 `batch_snapshot.py` は両カラムを結合して買建/売埋/売建/買埋を判定します。
+```
