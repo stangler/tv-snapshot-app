@@ -9,7 +9,7 @@ AI分析はClaudeなどの外部AIに貼り付けて使うか、Ollamaをオプ�
 
 ## 構成
 
-```
+```text
 tv-snapshot-app/
 ├── .devcontainer/
 │   ├── devcontainer.json          # VS Code DevContainer設定
