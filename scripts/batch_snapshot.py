@@ -450,7 +450,21 @@ def load_trades_from_csv(csv_path: str) -> pd.DataFrame:
     df["price"] = pd.to_numeric(df["price"].astype(str).str.replace(",", "", regex=False), errors="coerce")
     df = df.dropna(subset=["price"])
     df["symbol"] = df["symbol"].astype(str).str.strip()
-    df["date"]   = df["date"].astype(str).str.extract(r"(\d{4}[/\-]\d{2}[/\-]\d{2})")[0]
+
+    # 約定日カラムから日付・時刻を分離して抽出（月・日をゼロパディングしYYYY/MM/DDに正規化）
+    date_col_raw = df["date"].astype(str)
+    raw_date = date_col_raw.str.extract(r"(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})")
+    df["date"] = (
+        raw_date[0] + "/" +
+        raw_date[1].str.zfill(2) + "/" +
+        raw_date[2].str.zfill(2)
+    )
+
+    # timeカラムが未設定の場合、約定日の時刻部分（H:MM / HH:MM）を抽出
+    if "time" not in df.columns or df["time"].isna().all():
+        extracted_time = date_col_raw.str.extract(r"(\d{1,2}:\d{2})")[0]
+        if extracted_time.notna().any():
+            df["time"] = extracted_time
 
     return df
 
@@ -530,8 +544,30 @@ def take_nikkei_snapshot(date_str: str, out_path: Path,
 
 
 # ──────────────────────────────────────────────
-# マーカー描画
+# 時刻 → X座標変換
 # ──────────────────────────────────────────────
+MARKET_OPEN_MINUTES  = 9 * 60        # 09:00 JST
+MARKET_CLOSE_MINUTES = 15 * 60 + 30  # 15:30 JST
+MARKET_TOTAL_MINUTES = MARKET_CLOSE_MINUTES - MARKET_OPEN_MINUTES  # 390分
+
+
+def time_to_x(time_str: str) -> int | None:
+    """
+    'H:MM' / 'HH:MM' 形式のJST時刻をチャートのX座標に変換する。
+    9:00〜15:30 を CHART_LEFT_PX〜CHART_RIGHT_PX に線形マッピング。
+    昼休み(11:30〜12:30)は簡略化してそのまま線形処理。
+    """
+    try:
+        h, m = map(int, str(time_str).strip().split(":"))
+    except Exception:
+        return None
+    minutes = h * 60 + m
+    minutes = max(MARKET_OPEN_MINUTES, min(minutes, MARKET_CLOSE_MINUTES))
+    ratio = (minutes - MARKET_OPEN_MINUTES) / MARKET_TOTAL_MINUTES
+    return int(CHART_LEFT_PX + ratio * (CHART_RIGHT_PX - CHART_LEFT_PX))
+
+
+
 def price_to_y(price: float, price_min: float, price_max: float) -> int:
     if price_max == price_min:
         return (CHART_TOP_PX + CHART_BOTTOM_PX) // 2
@@ -539,16 +575,57 @@ def price_to_y(price: float, price_min: float, price_max: float) -> int:
     return int(CHART_TOP_PX + ratio * (CHART_BOTTOM_PX - CHART_TOP_PX))
 
 
+def _draw_text_with_outline(draw, pos, text, font, fill, outline=(0, 0, 0, 255), width=2):
+    """縁取り付きテキストを描画する"""
+    x, y = pos
+    for dx in range(-width, width + 1):
+        for dy in range(-width, width + 1):
+            if dx != 0 or dy != 0:
+                draw.text((x + dx, y + dy), text, font=font, fill=outline)
+    draw.text(pos, text, font=font, fill=fill)
+
+
+def _draw_filled_circle(draw, cx, cy, r, fill, outline=None, outline_width=3):
+    """塗りつぶし円を描画する"""
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=fill)
+    if outline:
+        draw.ellipse(
+            [cx - r, cy - r, cx + r, cy + r],
+            outline=outline, width=outline_width,
+        )
+
+
+def _draw_price_label(draw, x, y, label, font, color, above: bool):
+    """価格ラベルをボックス付きで描画する"""
+    bbox = draw.textbbox((0, 0), label, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    pad = 4
+    lx = x - tw // 2 - pad
+    ly = (y - th - pad * 2 - 6) if above else (y + 6)
+    rx, ry = lx + tw + pad * 2, ly + th + pad * 2
+    draw.rounded_rectangle([lx, ly, rx, ry], radius=4,
+                            fill=(0, 0, 0, 180), outline=color + (200,), width=1)
+    draw.text((lx + pad, ly + pad), label, font=font, fill=color + (255,))
+
+
 def draw_markers(image_path: Path, trades: pd.DataFrame, out_path: Path):
     img = Image.open(image_path).convert("RGBA")
     overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
+    CIRCLE_R    = 22   # マーカー円の半径
+    FONT_SIZE   = 20   # 番号フォントサイズ
+    LABEL_SIZE  = 16   # 価格ラベルのフォントサイズ
+    LINE_WIDTH  = 3    # エントリー→エグジット結線の太さ
+
     try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                                  MARKER_FONT_SIZE)
+        font_num   = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", FONT_SIZE)
+        font_label = ImageFont.truetype(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", LABEL_SIZE)
     except Exception:
-        font = ImageFont.load_default()
+        font_num = font_label = ImageFont.load_default()
 
     prices = trades["price"].dropna().tolist()
     if not prices:
@@ -561,36 +638,111 @@ def draw_markers(image_path: Path, trades: pd.DataFrame, out_path: Path):
     price_min = p_min - pad
     price_max = p_max + pad
 
-    total = len(trades)
+    total       = len(trades)
     chart_width = CHART_RIGHT_PX - CHART_LEFT_PX
 
+    # 時刻カラムが使えるか確認
+    has_time = (
+        "time" in trades.columns
+        and trades["time"].notna().any()
+        and trades["time"].astype(str).str.contains(r"\d+:\d+").any()
+    )
+
+    # ── 各約定のXY座標と属性を先に計算 ──
+    points = []
     for i, row in trades.iterrows():
-        price    = row.get("price")
-        buysell  = str(row.get("buysell", "")).strip()
-        side     = str(row.get("side",    "")).strip()
+        price   = row.get("price")
+        buysell = str(row.get("buysell", "")).strip()
+        side    = str(row.get("side",    "")).strip()
         combined = (buysell + " " + side).strip()
 
         if pd.isna(price):
             continue
 
-        x = int(CHART_LEFT_PX + (i / max(total - 1, 1)) * chart_width)
-        y = price_to_y(price, price_min, price_max)
-
-        is_buy = any(k in combined for k in ["買建", "買埋", "買", "buy", "Buy", "BUY", "long"])
-        if is_buy:
-            marker = "▲"
-            color  = MARKER_COLOR_BUY
-            text_y = y - MARKER_FONT_SIZE
+        # X座標: 時刻ベース優先、フォールバックはインデックス均等割り
+        if has_time:
+            x = time_to_x(str(row.get("time", "")))
+            if x is None:
+                x = int(CHART_LEFT_PX + (i / max(total - 1, 1)) * chart_width)
         else:
-            marker = "▽"
-            color  = MARKER_COLOR_SELL
-            text_y = y
+            x = int(CHART_LEFT_PX + (i / max(total - 1, 1)) * chart_width)
 
-        draw.text((x - MARKER_FONT_SIZE // 2, text_y), marker,
-                  font=font, fill=color + (220,))
-        label = f"{int(price)}"
-        draw.text((x - MARKER_FONT_SIZE, text_y - MARKER_FONT_SIZE - 2),
-                  label, font=font, fill=color + (180,))
+        y = price_to_y(price, price_min, price_max)
+        is_buy = any(k in combined for k in ["買建", "買埋", "買", "buy", "Buy", "BUY", "long"])
+        points.append({
+            "no":     i + 1,
+            "x":      x,
+            "y":      y,
+            "price":  price,
+            "is_buy": is_buy,
+            "color":  MARKER_COLOR_BUY if is_buy else MARKER_COLOR_SELL,
+        })
+
+    # ── エントリー→エグジット 結線（隣接する買→売 or 売→買をペアリング） ──
+    used = set()
+    for idx, pt in enumerate(points):
+        if idx in used:
+            continue
+        for jdx in range(idx + 1, len(points)):
+            if jdx in used:
+                continue
+            nxt = points[jdx]
+            # 逆方向なら結線
+            if pt["is_buy"] != nxt["is_buy"]:
+                draw.line(
+                    [(pt["x"], pt["y"]), (nxt["x"], nxt["y"])],
+                    fill=(255, 255, 100, 160),
+                    width=LINE_WIDTH,
+                )
+                used.add(idx)
+                used.add(jdx)
+                break
+
+    # ── マーカー本体を描画 ──
+    for pt in points:
+        x, y   = pt["x"], pt["y"]
+        color  = pt["color"]
+        is_buy = pt["is_buy"]
+        no     = pt["no"]
+
+        # 円の縁取り（白）→ 塗りつぶし
+        _draw_filled_circle(draw, x, y, CIRCLE_R,
+                            fill=color + (200,),
+                            outline=(255, 255, 255, 220),
+                            outline_width=3)
+
+        # ▲ or ▽ シンボル（円の中央）
+        symbol = "▲" if is_buy else "▽"
+        sym_bbox = draw.textbbox((0, 0), symbol, font=font_num)
+        sw = sym_bbox[2] - sym_bbox[0]
+        sh = sym_bbox[3] - sym_bbox[1]
+        _draw_text_with_outline(
+            draw,
+            (x - sw // 2, y - sh // 2 - 2),
+            symbol, font_num,
+            fill=(255, 255, 255, 255),
+            outline=(0, 0, 0, 200),
+            width=1,
+        )
+
+        # 取引番号（円の右上）
+        num_str = str(no)
+        _draw_text_with_outline(
+            draw,
+            (x + CIRCLE_R - 4, y - CIRCLE_R - 4),
+            num_str, font_label,
+            fill=(255, 255, 100, 255),
+            outline=(0, 0, 0, 255),
+            width=2,
+        )
+
+        # 価格ラベル（買いは上、売りは下）
+        _draw_price_label(
+            draw, x, y,
+            f"¥{int(pt['price']):,}",
+            font_label, color,
+            above=is_buy,
+        )
 
     composite = Image.alpha_composite(img, overlay).convert("RGB")
     composite.save(str(out_path))
