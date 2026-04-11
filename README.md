@@ -1,5 +1,5 @@
-```markdown
 # TradingView Snapshot 分析環境
+
 
 **Python + Playwright** で動くシンプル構成。
 証券会社の約定照会CSVから銘柄を読み取り、TradingViewの1分足チャートを自動撮影・マーカー合成・プロンプト出力する。
