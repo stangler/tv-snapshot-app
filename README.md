@@ -22,10 +22,36 @@ tv-snapshot-app/
 │   ├── batch_snapshot.py          # メイン: 撮影→マーカー合成→プロンプト出力→Ollama分析
 │   └── export_prompt.py           # 外部AIエージェント用プロンプト・データ出力（単体利用可）
 ├── csv/                           # 約定照会CSVの置き場
+├── demo-trade/                    # デモトレード伝票
+│   └── demo-trade-input.html      # ブラウザで開くだけで使用可能
 ├── tests/
 │   └── test_batch_snapshot.py     # ユニットテスト
 └── snapshots/                     # 撮影画像・分析テキストの保存先
 ```
+
+---
+
+## デモトレード伝票（demo-trade-input）
+
+証券会社CSV不要でデモトレードを記録 → 本番と同じスキーマのCSV出力。既存の `tv-snapshot-app` に無改造で流用可能。
+
+### 使い方
+1. `demo-trade/demo-trade-input.html` をブラウザで開く（ダブルクリックでOK、サーバー不要）
+2. 銘柄コード・売買区分（買建/売建/売埋/買埋）・単価・数量を入力→「伝票に追加」
+3. 一覧で概算損益を確認しながら複数件入力
+4. 「約定照会CSVを出力」→ `{YYYY}{MMDD}_約定照会.csv` がダウンロードされる
+5. そのファイルを `csv/` フォルダに置き、通常どおり実行
+
+```bash
+snap --date MMDD
+```
+
+### 出力CSV仕様
+列: `約定日,コード,銘柄名,取引,売買,約定数量(株/口),約定単価(円)`
+既存 `load_trades_from_csv()` の候補カラム名に完全一致 → 本番CSVと区別なく処理される。
+
+### データ保持
+入力中データは `localStorage` に自動保存（ブラウザ閉じても消えない）。「全件削除」で明示的にクリアするまで残る。
 
 ---
 
@@ -403,4 +429,3 @@ snap --date 0315 --with-analysis --ollama-host http://localhost:11434 --analysis
 **損益が0円と表示される**
 `side`（取引）カラムと `buysell`（売買）カラムの両方が正しく読み込まれているか確認してください。
 `batch_snapshot.py` は両カラムを結合して買建/売埋/売建/買埋を判定します。
-```

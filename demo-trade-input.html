@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>デモトレード伝票</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#f7f1e4;
+    --paper-line:#dcd2ba;
+    --ink:#3a3226;
+    --ink-soft:#7a6f5c;
+    --red:#d6473c;
+    --red-deep:#b23429;
+    --blue:#3b5f8a;
+    --green:#2f7d5b;
+    --card:#fffdf7;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:
+      repeating-linear-gradient(var(--paper) 0 31px, var(--paper-line) 31px 32px),
+      var(--paper);
+    color:var(--ink);
+    font-family:'Zen Maru Gothic', sans-serif;
+    padding:28px 16px 60px;
+  }
+  .wrap{max-width:880px;margin:0 auto;}
+
+  header{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    border-bottom:3px double var(--ink);
+    padding-bottom:10px;
+    margin-bottom:22px;
+  }
+  header h1{
+    font-size:22px;
+    font-weight:900;
+    margin:0;
+    letter-spacing:.04em;
+  }
+  header .stamp{
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+    color:var(--red-deep);
+    border:2px solid var(--red-deep);
+    border-radius:6px;
+    padding:3px 8px;
+    transform:rotate(-4deg);
+    font-weight:700;
+    white-space:nowrap;
+  }
+
+  .slip{
+    background:var(--card);
+    border:1px solid var(--paper-line);
+    border-radius:4px;
+    box-shadow:0 1px 0 rgba(58,50,38,.08), 0 8px 18px -12px rgba(58,50,38,.35);
+    padding:20px;
+    margin-bottom:22px;
+    position:relative;
+  }
+  .slip::before{
+    content:"";
+    position:absolute;
+    top:0; left:26px;
+    width:1px; height:100%;
+    background:var(--paper-line);
+    opacity:.6;
+  }
+
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:12px 14px;
+  }
+  @media(max-width:640px){ .grid{grid-template-columns:repeat(2,1fr);} }
+
+  .field{display:flex;flex-direction:column;gap:4px;}
+  .field.span2{grid-column:span 2;}
+  label{font-size:11px;color:var(--ink-soft);font-weight:700;letter-spacing:.03em;}
+  input, select{
+    font-family:'JetBrains Mono',monospace;
+    font-size:14px;
+    padding:7px 8px;
+    border:none;
+    border-bottom:2px solid var(--paper-line);
+    background:transparent;
+    color:var(--ink);
+    outline:none;
+  }
+  input:focus, select:focus{border-bottom-color:var(--red);}
+
+  .buysell-toggle{display:flex;gap:6px;flex-wrap:wrap;}
+  .bs-btn{
+    flex:1;
+    min-width:64px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:12px;
+    font-weight:700;
+    padding:8px 4px;
+    border:2px solid var(--paper-line);
+    border-radius:6px;
+    background:var(--card);
+    color:var(--ink-soft);
+    cursor:pointer;
+  }
+  .bs-btn[data-side="long-in"], .bs-btn[data-side="short-out"]{}
+  .bs-btn.active[data-kind="in"]{background:var(--red);border-color:var(--red-deep);color:#fff;}
+  .bs-btn.active[data-kind="out"]{background:var(--blue);border-color:#28466a;color:#fff;}
+
+  .actions{display:flex;justify-content:flex-end;margin-top:16px;gap:8px;}
+  button.primary{
+    font-family:'Zen Maru Gothic',sans-serif;
+    font-weight:700;
+    font-size:14px;
+    background:var(--ink);
+    color:var(--paper);
+    border:none;
+    border-radius:6px;
+    padding:10px 22px;
+    cursor:pointer;
+  }
+  button.primary:hover{background:var(--red-deep);}
+  button.ghost{
+    font-family:'Zen Maru Gothic',sans-serif;
+    font-size:13px;
+    background:transparent;
+    border:2px solid var(--paper-line);
+    color:var(--ink-soft);
+    border-radius:6px;
+    padding:9px 16px;
+    cursor:pointer;
+  }
+
+  .list-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;}
+  .list-head h2{font-size:15px;margin:0;font-weight:700;}
+  .pnl-badge{
+    font-family:'JetBrains Mono',monospace;
+    font-size:13px;
+    font-weight:700;
+    padding:3px 10px;
+    border-radius:20px;
+  }
+  .pnl-pos{background:rgba(47,125,91,.15);color:var(--green);}
+  .pnl-neg{background:rgba(214,71,60,.15);color:var(--red-deep);}
+  .pnl-zero{background:rgba(122,111,92,.15);color:var(--ink-soft);}
+
+  table{width:100%;border-collapse:collapse;font-family:'JetBrains Mono',monospace;font-size:12.5px;}
+  thead th{
+    text-align:left;
+    font-size:10px;
+    color:var(--ink-soft);
+    border-bottom:2px solid var(--ink);
+    padding:6px 6px;
+    font-weight:700;
+  }
+  tbody td{padding:8px 6px;border-bottom:1px dashed var(--paper-line);}
+  tbody tr:hover{background:rgba(214,71,60,.05);}
+  .tag{
+    display:inline-block;
+    font-size:10.5px;
+    font-weight:700;
+    padding:2px 7px;
+    border-radius:4px;
+  }
+  .tag-in{background:rgba(214,71,60,.15);color:var(--red-deep);}
+  .tag-out{background:rgba(59,95,138,.15);color:var(--blue);}
+  .del-btn{
+    background:none;border:none;color:var(--ink-soft);cursor:pointer;font-size:15px;
+  }
+  .del-btn:hover{color:var(--red-deep);}
+  .empty{color:var(--ink-soft);font-size:13px;padding:20px 0;text-align:center;}
+
+  .note{
+    font-size:11px;
+    color:var(--ink-soft);
+    margin-top:6px;
+    line-height:1.6;
+  }
+  .footer-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>📝 デモトレード伝票</h1>
+    <div class="stamp">DEMO / 模擬</div>
+  </header>
+
+  <div class="slip">
+    <div class="grid">
+      <div class="field">
+        <label>約定日</label>
+        <input type="date" id="f-date">
+      </div>
+      <div class="field">
+        <label>約定時刻</label>
+        <input type="time" id="f-time" step="1">
+      </div>
+      <div class="field">
+        <label>銘柄コード</label>
+        <input type="text" id="f-symbol" placeholder="5016" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label>銘柄名（任意）</label>
+        <input type="text" id="f-name" placeholder="ＪＸ金属">
+      </div>
+
+      <div class="field span2">
+        <label>売買区分</label>
+        <div class="buysell-toggle" id="bs-toggle">
+          <button type="button" class="bs-btn" data-kind="in"  data-value="買建">買建（新規）</button>
+          <button type="button" class="bs-btn" data-kind="in"  data-value="売建">売建（新規）</button>
+          <button type="button" class="bs-btn" data-kind="out" data-value="売埋">売埋（決済）</button>
+          <button type="button" class="bs-btn" data-kind="out" data-value="買埋">決済（買埋）</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>約定単価（円）</label>
+        <input type="number" id="f-price" placeholder="5359" step="0.1">
+      </div>
+      <div class="field">
+        <label>約定数量（株）</label>
+        <input type="number" id="f-qty" placeholder="200" step="1">
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="ghost" id="btn-reset-form">クリア</button>
+      <button class="primary" id="btn-add">＋ 伝票に追加</button>
+    </div>
+    <div class="note">「買建」「売建」= 新規建て（信用新規）／「売埋」「買埋」= 決済（信用返済）。取引区分は自動判定。</div>
+  </div>
+
+  <div class="slip">
+    <div class="list-head">
+      <h2>本日の約定一覧</h2>
+      <span class="pnl-badge pnl-zero" id="pnl-badge">概算損益 ±0円</span>
+    </div>
+    <table>
+      <thead>
+        <tr><th>時刻</th><th>コード</th><th>銘柄名</th><th>区分</th><th>単価</th><th>数量</th><th>損益</th><th></th></tr>
+      </thead>
+      <tbody id="trade-body"></tbody>
+    </table>
+    <div class="empty" id="empty-msg">まだ約定がありません。上の伝票から追加してください。</div>
+
+    <div class="footer-actions">
+      <button class="ghost" id="btn-clear-all">全件削除</button>
+      <button class="primary" id="btn-export">📄 約定照会CSVを出力</button>
+    </div>
+    <div class="note">
+      出力ファイル名は <b>{年}{月日4桁}_約定照会.csv</b> 形式。既存アプリの <code>csv/</code> フォルダに置き、
+      <code>snap --date MMDD</code> でそのまま撮影・分析できます（本番CSVと同一スキーマ）。
+    </div>
+  </div>
+
+</div>
+
+<script>
+const STORAGE_KEY = "demoTradeSlip.v1";
+let trades = [];
+let selectedBS = null;
+
+const $ = id => document.getElementById(id);
+
+function todayISO(){
+  const d = new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+}
+function nowHMS(){
+  const d = new Date();
+  return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")+":"+String(d.getSeconds()).padStart(2,"0");
+}
+
+function load(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    trades = raw ? JSON.parse(raw) : [];
+  }catch(e){ trades = []; }
+}
+function save(){
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(trades)); }catch(e){}
+}
+
+function initForm(){
+  $("f-date").value = todayISO();
+  $("f-time").value = nowHMS();
+}
+
+document.querySelectorAll(".bs-btn").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    document.querySelectorAll(".bs-btn").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    selectedBS = btn.dataset.value;
+  });
+});
+
+function buysellToSide(bs){
+  return (bs === "買建" || bs === "売建") ? "信用新規" : "信用返済";
+}
+
+$("btn-reset-form").addEventListener("click", ()=>{
+  $("f-symbol").value = "";
+  $("f-name").value = "";
+  $("f-price").value = "";
+  $("f-qty").value = "";
+  document.querySelectorAll(".bs-btn").forEach(b=>b.classList.remove("active"));
+  selectedBS = null;
+  initForm();
+});
+
+$("btn-add").addEventListener("click", ()=>{
+  const date = $("f-date").value;
+  const time = $("f-time").value || "09:00:00";
+  const symbol = $("f-symbol").value.trim();
+  const name = $("f-name").value.trim();
+  const price = parseFloat($("f-price").value);
+  const qty = parseInt($("f-qty").value, 10);
+
+  if(!date || !symbol || !selectedBS || isNaN(price) || isNaN(qty)){
+    alert("約定日・銘柄コード・売買区分・単価・数量を入力してください。");
+    return;
+  }
+
+  trades.push({
+    date: date.replaceAll("-", "/"),
+    time: time.length === 5 ? time+":00" : time,
+    symbol, name,
+    side: buysellToSide(selectedBS),
+    buysell: selectedBS,
+    price, qty
+  });
+  trades.sort((a,b)=> (a.date+a.time).localeCompare(b.date+b.time));
+  save();
+  render();
+
+  $("f-symbol").value = "";
+  $("f-price").value = "";
+  $("f-qty").value = "";
+  $("f-time").value = nowHMS();
+});
+
+$("btn-clear-all").addEventListener("click", ()=>{
+  if(trades.length && confirm("全件削除してよいですか？")){
+    trades = [];
+    save();
+    render();
+  }
+});
+
+function estimatePnl(list){
+  const longStack = [], shortStack = [];
+  let realized = 0;
+  const rowPnl = [];
+  for(const t of list){
+    let pnl = null;
+    if(t.buysell === "買建"){
+      longStack.push({p:t.price, q:t.qty});
+    } else if(t.buysell === "売埋"){
+      let remaining = t.qty, r = 0;
+      while(remaining > 0 && longStack.length){
+        const lot = longStack.shift();
+        const matched = Math.min(remaining, lot.q);
+        r += (t.price - lot.p) * matched;
+        remaining -= matched;
+        if(lot.q > matched) longStack.unshift({p:lot.p, q:lot.q-matched});
+      }
+      pnl = r; realized += r;
+    } else if(t.buysell === "売建"){
+      shortStack.push({p:t.price, q:t.qty});
+    } else if(t.buysell === "買埋"){
+      let remaining = t.qty, r = 0;
+      while(remaining > 0 && shortStack.length){
+        const lot = shortStack.shift();
+        const matched = Math.min(remaining, lot.q);
+        r += (lot.p - t.price) * matched;
+        remaining -= matched;
+        if(lot.q > matched) shortStack.unshift({p:lot.p, q:lot.q-matched});
+      }
+      pnl = r; realized += r;
+    }
+    rowPnl.push(pnl);
+  }
+  return {rowPnl, realized};
+}
+
+function render(){
+  const tbody = $("trade-body");
+  const emptyMsg = $("empty-msg");
+  tbody.innerHTML = "";
+
+  if(!trades.length){
+    emptyMsg.style.display = "block";
+  }else{
+    emptyMsg.style.display = "none";
+  }
+
+  const {rowPnl, realized} = estimatePnl(trades);
+
+  trades.forEach((t, i)=>{
+    const tr = document.createElement("tr");
+    const pnl = rowPnl[i];
+    const pnlText = (pnl === null) ? "-" : (pnl>=0 ? "+" : "") + Math.round(pnl).toLocaleString() + "円";
+    const tagClass = (t.buysell === "買建" || t.buysell === "売建") ? "tag-in" : "tag-out";
+    tr.innerHTML = `
+      <td>${t.time.slice(0,5)}</td>
+      <td>${t.symbol}</td>
+      <td>${t.name || "-"}</td>
+      <td><span class="tag ${tagClass}">${t.buysell}</span></td>
+      <td>¥${Number(t.price).toLocaleString(undefined,{minimumFractionDigits:1})}</td>
+      <td>${t.qty}株</td>
+      <td>${pnlText}</td>
+      <td><button class="del-btn" data-i="${i}">✕</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  tbody.querySelectorAll(".del-btn").forEach(b=>{
+    b.addEventListener("click", ()=>{
+      trades.splice(parseInt(b.dataset.i,10), 1);
+      save();
+      render();
+    });
+  });
+
+  const badge = $("pnl-badge");
+  const sign = realized >= 0 ? "+" : "";
+  badge.textContent = `概算損益 ${sign}${Math.round(realized).toLocaleString()}円`;
+  badge.className = "pnl-badge " + (realized>0 ? "pnl-pos" : realized<0 ? "pnl-neg" : "pnl-zero");
+}
+
+function csvEscape(v){
+  const s = String(v ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+}
+
+$("btn-export").addEventListener("click", ()=>{
+  if(!trades.length){ alert("出力する約定がありません。"); return; }
+
+  const header = ["約定日","コード","銘柄名","取引","売買","約定数量(株/口)","約定単価(円)"];
+  const lines = [header.map(csvEscape).join(",")];
+  for(const t of trades){
+    lines.push([
+      `${t.date} ${t.time}`,
+      t.symbol,
+      t.name || "",
+      t.side,
+      t.buysell,
+      t.qty,
+      t.price
+    ].map(csvEscape).join(","));
+  }
+  const csv = "\uFEFF" + lines.join("\r\n") + "\r\n";
+
+  // ファイル名: 最頻日付を採用 → {YYYY}{MMDD}_約定照会.csv
+  const dateCounts = {};
+  trades.forEach(t=>{ dateCounts[t.date] = (dateCounts[t.date]||0)+1; });
+  const mainDate = Object.entries(dateCounts).sort((a,b)=>b[1]-a[1])[0][0];
+  const [y,m,d] = mainDate.split("/");
+  const filename = `${y}${m.padStart(2,"0")}${d.padStart(2,"0")}_約定照会.csv`;
+
+  const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+});
+
+load();
+initForm();
+render();
+</script>
+</body>
+</html>
