@@ -1,25 +1,15 @@
 """
 batch_snapshot.py
 -----------------
-TradingView 1分足チャート 一括撮影 + プロンプト出力 + Ollama AI分析
+TradingView 1分足チャート 一括撮影 + プロンプト出力
 
 使い方:
-  # 撮影 + プロンプト出力（デフォルト）
+  # 撮影 + プロンプト出力
   snap --date 0315
-
-  # 撮影 + プロンプト出力 + AI分析
-  snap --date 0315 --with-analysis
-
-  # 既存の撮影済み画像だけ分析し直す
-  snap --date 0315 --analysis-only
-
-  # 空・エラーの分析ファイルのみ再分析
-  snap --date 0315 --retry-empty
+  snap --csv /path/to/約定照会.csv
 """
 
 import argparse
-import base64
-import io
 import json
 import os
 import sys
@@ -29,7 +19,6 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import pandas as pd
-import requests
 from PIL import Image, ImageDraw, ImageFont
 from playwright.sync_api import sync_playwright
 
@@ -61,7 +50,9 @@ def _load_font_candidates(size: int, bold: bool = False):
 # ──────────────────────────────────────────────
 # 定数
 # ──────────────────────────────────────────────
-SNAPSHOT_DIR = Path("/workspace/snapshots")
+REPO_ROOT    = Path(__file__).resolve().parent.parent
+SNAPSHOT_DIR = REPO_ROOT / "snapshots"
+CSV_DIR      = REPO_ROOT / "csv"
 
 JST = timezone(timedelta(hours=9))
 
@@ -82,38 +73,6 @@ MARKER_FONT_SIZE = 28
 MARKER_COLOR_BUY  = (0, 180, 80)
 MARKER_COLOR_SELL = (220, 50, 50)
 MARKER_COLOR_NAN  = (180, 180, 30)
-
-DEFAULT_OLLAMA_HOST      = "http://ollama:11434"
-DEFAULT_ANALYSIS_MODEL   = "qwen3.5:4b"
-DEFAULT_ANALYSIS_TIMEOUT = 300
-
-ANALYSIS_PROMPT_TEMPLATE = """\
-STRICT RULE: You MUST respond in Japanese ONLY.
-FORBIDDEN: Chinese characters that are not also Japanese kanji (e.g. 趋势, 买, 下行, 显示 are FORBIDDEN).
-FORBIDDEN: English words mixed in Japanese sentences.
-If you are unsure of a word, use katakana or rephrase in plain Japanese.
-
-You are a Japanese stock day-trading analyst.
-
-This chart shows a Japanese stock ({symbol}) 1-minute candlestick chart on {date}.
-▲（緑）= 買いエントリー（買建・買埋）
-▽（赤）= 売りエントリー（売建・売埋）
-
-【約定一覧】（全{trade_count}件）
-{trade_table}
-
-{pnl_text}
-
-**重要**: チャートの時刻はUTCですが、JSTの時刻で分析してください。
-
-以下の4項目を【必ず自然な日本語のみ】で回答してください。中国語・英語は一切使わないこと。
-約定一覧のデータとチャート画像を照合しながら分析してください。
-
-1. チャートの全体的なトレンド（上昇・下降・横ばい）
-2. 約定タイミングの評価（各約定について良かった点・改善点）
-3. チャートパターンの有無（例：ダブルトップ、フラッグ、レンジブレイク等）
-4. 次回トレードへのアドバイス
-"""
 
 EXPORT_SYSTEM_PROMPT = """\
 あなたは日本株のデイトレード専門のアナリストです。
@@ -313,17 +272,6 @@ def estimate_pnl(trades: pd.DataFrame) -> str:
         result += f"\n【未決済ショート建玉】 {sq2}株（建値平均 ¥{sp2:,.1f}）"
 
     return result
-
-
-def build_prompt(trades: pd.DataFrame, symbol: str, date_str: str) -> str:
-    prompt = ANALYSIS_PROMPT_TEMPLATE.format(
-        symbol      = symbol,
-        date        = date_str,
-        trade_count = len(trades),
-        trade_table = build_trade_table(trades),
-        pnl_text    = estimate_pnl(trades),
-    )
-    return prompt + "\n/no_think"
 
 
 # ──────────────────────────────────────────────
@@ -961,172 +909,47 @@ def draw_markers(image_path: Path, trades: pd.DataFrame, out_path: Path):
 
 
 # ──────────────────────────────────────────────
-# Ollama AI分析
-# ──────────────────────────────────────────────
-def analyze_image_with_ollama(image_path: Path,
-                               ollama_host: str = DEFAULT_OLLAMA_HOST,
-                               model: str = DEFAULT_ANALYSIS_MODEL,
-                               prompt: str = "",
-                               timeout: int = DEFAULT_ANALYSIS_TIMEOUT) -> str:
-    with open(image_path, "rb") as f:
-        img_b64 = base64.b64encode(f.read()).decode("utf-8")
-
-    payload = {
-        "model":  model,
-        "prompt": prompt,
-        "images": [img_b64],
-        "stream": False,
-    }
-
-    url = f"{ollama_host.rstrip('/')}/api/generate"
-    try:
-        resp = requests.post(url, json=payload, timeout=timeout)
-        resp.raise_for_status()
-        return resp.json().get("response", "（レスポンスなし）")
-    except requests.exceptions.ConnectionError:
-        return f"[ERROR] Ollamaに接続できません: {url}"
-    except requests.exceptions.Timeout:
-        return f"[ERROR] タイムアウト ({timeout}秒)"
-    except Exception as e:
-        return f"[ERROR] {e}"
-
-
-def save_analysis(analysis_text: str, image_path: Path, trades: pd.DataFrame):
-    out_path = image_path.with_name(image_path.stem + "_analysis.txt")
-
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    header = (
-        "===================================\n"
-        "AI分析レポート\n"
-        f"生成日時: {now}\n"
-        f"対象画像: {image_path.name}\n"
-        "===================================\n\n"
-    )
-
-    trade_section = "【約定一覧】\n" + build_trade_table(trades) + "\n\n"
-    pnl_section   = estimate_pnl(trades) + "\n\n"
-    content = header + trade_section + pnl_section + "【AI分析】\n" + analysis_text + "\n"
-
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(content)
-
-    print(f"  💾 分析結果保存 → {out_path.name}")
-    return out_path
-
-
-# ──────────────────────────────────────────────
 # メイン処理
 # ──────────────────────────────────────────────
-def analysis_is_empty(analysis_path: Path) -> bool:
-    if not analysis_path.exists():
-        return True
-    text = analysis_path.read_text(encoding="utf-8")
-    marker = "【AI分析】"
-    idx = text.find(marker)
-    if idx == -1:
-        return True
-    after = text[idx + len(marker):].strip()
-    return after == "" or after.startswith("[ERROR]")
-
-
 def process_group(symbol: str, date_str: str, trades: pd.DataFrame, args):
     """1銘柄×1日の処理"""
-    safe_date     = date_str.replace("/", "").replace("-", "")
-    out_dir       = SNAPSHOT_DIR / safe_date
+    safe_date   = date_str.replace("/", "").replace("-", "")
+    out_dir     = SNAPSHOT_DIR / safe_date
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    base_name     = f"TSE_{symbol}_1m_{safe_date}"
-    raw_path      = out_dir / f"{base_name}_raw.png"
-    marked_path   = out_dir / f"{base_name}.png"
-    analysis_path = out_dir / f"{base_name}_analysis.txt"
+    base_name   = f"TSE_{symbol}_1m_{safe_date}"
+    raw_path    = out_dir / f"{base_name}_raw.png"
+    marked_path = out_dir / f"{base_name}.png"
 
     print(f"\n{'='*50}")
     print(f"🏷  銘柄: {symbol}  日付: {date_str}  約定数: {len(trades)}")
 
-    if getattr(args, "retry_empty", False):
-        if not analysis_is_empty(analysis_path):
-            print("  ✅ 分析済みのためスキップ")
-            return
-
-    if not args.analysis_only and not getattr(args, "retry_empty", False):
-        if not take_snapshot(symbol, date_str, raw_path):
-            print("  ⚠️  撮影失敗。スキップします。")
-            return
-        draw_markers(raw_path, trades, marked_path)
-    else:
-        if not marked_path.exists():
-            if raw_path.exists():
-                draw_markers(raw_path, trades, marked_path)
-            else:
-                print(f"  ⚠️  画像が見つかりません: {marked_path}\n  撮影してから --analysis-only を使ってください。")
-                return
+    if not take_snapshot(symbol, date_str, raw_path):
+        print("  ⚠️  撮影失敗。スキップします。")
+        return
+    draw_markers(raw_path, trades, marked_path)
 
     export_prompt_and_payload(symbol, date_str, trades, marked_path, out_dir, safe_date)
-
-    if args.no_analysis:
-        print("  ℹ️  分析スキップ（--with-analysis を付けると分析します）")
-        return
-
-    print(f"  🤖 Ollamaで分析中 ({args.analysis_model})...")
-    prompt = build_prompt(trades, symbol, date_str)
-    analysis = analyze_image_with_ollama(
-        image_path  = marked_path,
-        ollama_host = args.ollama_host,
-        model       = args.analysis_model,
-        prompt      = prompt,
-        timeout     = args.analysis_timeout,
-    )
-    save_analysis(analysis, marked_path, trades)
 
 
 def main():
     sys.stdout.reconfigure(line_buffering=True, encoding="utf-8")
-    parser = argparse.ArgumentParser(description="TradingView一括撮影 + プロンプト出力 + Ollama分析")
+    parser = argparse.ArgumentParser(description="TradingView一括撮影 + プロンプト出力")
 
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--csv",  help="約定照会CSVのパス（フルパス）")
     group.add_argument("--date", help="月日4桁 例: 0315 → 20260315_約定照会.csv を自動使用")
-
-    parser.add_argument("--with-analysis",    action="store_true", help="Ollamaで分析する（デフォルトはスキップ）")
-    parser.add_argument("--analysis-only",    action="store_true", help="撮影をスキップ（分析のみ）")
-    parser.add_argument("--retry-empty",      action="store_true", help="空・エラーの分析ファイルのみ再分析")
-    parser.add_argument("--ollama-host",      default=os.environ.get("OLLAMA_HOST", DEFAULT_OLLAMA_HOST))
-    parser.add_argument("--analysis-model",   default=DEFAULT_ANALYSIS_MODEL)
-    parser.add_argument("--analysis-timeout", type=int, default=DEFAULT_ANALYSIS_TIMEOUT)
     args = parser.parse_args()
 
     if args.date:
         year = datetime.now().year
-        args.csv = f"/workspace/csv/{year}{args.date}_約定照会.csv"
+        args.csv = str(CSV_DIR / f"{year}{args.date}_約定照会.csv")
         print(f"[INFO] CSVパス: {args.csv}")
-
-    args.no_analysis = not args.with_analysis
-
-    if args.no_analysis and args.analysis_only:
-        print("❌ 分析スキップと --analysis-only は同時に指定できません")
-        sys.exit(1)
-
-    if args.retry_empty and args.no_analysis:
-        print("❌ --retry-empty と分析スキップは同時に指定できません")
-        sys.exit(1)
 
     print(f"📂 CSV読み込み: {args.csv}")
     df = load_trades_from_csv(args.csv)
     groups = group_by_symbol_date(df)
     print(f"✅ {len(groups)} 銘柄×日付 を処理します\n")
-
-    if not args.no_analysis:
-        print(f"⏳ モデルをウォームアップ中 ({args.analysis_model})...")
-        warmup_url = f"{args.ollama_host.rstrip('/')}/api/generate"
-        try:
-            requests.post(warmup_url, json={
-                "model": args.analysis_model,
-                "prompt": "hi",
-                "stream": False,
-            }, timeout=120)
-            print("✅ ウォームアップ完了\n")
-        except Exception:
-            print("⚠️  ウォームアップ失敗（そのまま続行）\n")
 
     date_groups: dict = defaultdict(list)
 
@@ -1143,14 +966,13 @@ def main():
         out_dir = SNAPSHOT_DIR / safe_date
 
         # ── 日経平均を日付ごとに1回撮影 ──
-        if not args.analysis_only and not getattr(args, "retry_empty", False):
-            nikkei_path = out_dir / f"NI225_1m_{safe_date}.png"
-            if not nikkei_path.exists():
-                print(f"\n{'='*50}")
-                print(f"📷 日経平均（TVC:NI225）撮影中...")
-                take_nikkei_snapshot(safe_date, nikkei_path)
-            else:
-                print(f"\n✅ 日経平均画像は既存のためスキップ: {nikkei_path.name}")
+        nikkei_path = out_dir / f"NI225_1m_{safe_date}.png"
+        if not nikkei_path.exists():
+            print(f"\n{'='*50}")
+            print(f"📷 日経平均（TVC:NI225）撮影中...")
+            take_nikkei_snapshot(safe_date, nikkei_path)
+        else:
+            print(f"\n✅ 日経平均画像は既存のためスキップ: {nikkei_path.name}")
 
         export_summary_prompt(group_data, safe_date, out_dir)
 

@@ -5,7 +5,7 @@ export_prompt.py
 API呼び出しは行わない。出力ファイルを任意のエージェントに渡して使う。
 
 使い方:
-  python3 /workspace/scripts/export_prompt.py --csv /workspace/csv/20260306_約定照会.csv
+  uv run python3 scripts/export_prompt.py --csv csv/20260306_約定照会.csv
 
 出力（snapshotsの各銘柄フォルダに生成）:
   TSE_5016_1m_20260306_prompt.txt   ← エージェントに渡すプロンプト全文
@@ -20,7 +20,8 @@ from pathlib import Path
 
 import pandas as pd
 
-SNAPSHOT_DIR = Path("/workspace/snapshots")
+REPO_ROOT    = Path(__file__).resolve().parent.parent
+SNAPSHOT_DIR = REPO_ROOT / "snapshots"
 
 
 # ──────────────────────────────────────────────

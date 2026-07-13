@@ -3,9 +3,8 @@ test_batch_snapshot.py
 ----------------------
 batch_snapshot.py のユニットテスト
 
-実行方法（コンテナ内）:
-  pip install pytest Pillow --break-system-packages
-  pytest /workspace/scripts/test_batch_snapshot.py -v
+実行方法:
+  uv run pytest tests/test_batch_snapshot.py -v
 """
 
 import io
@@ -18,7 +17,7 @@ from PIL import Image
 
 # ── テスト対象のインポート ──────────────────────────────────────
 import sys
-sys.path.insert(0, "/workspace/scripts")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from batch_snapshot import (
     build_trade_table,
     draw_markers,
